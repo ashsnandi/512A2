@@ -4,15 +4,15 @@ import java.io.Serializable;
 
 class Propose implements Serializable {
 
-    private final int ballotId;
+    private final Ballot ballotId;
     private final int slot;
 
-    public Propose(int ballotId, int slot) {
+    public Propose(Ballot ballotId, int slot) {
         this.ballotId = ballotId;
         this.slot = slot;
     }
 
-    public int getBallotId() {
+    public Ballot getBallotId() {
         return ballotId;
     }
 
