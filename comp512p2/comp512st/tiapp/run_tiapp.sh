@@ -12,10 +12,10 @@ fi
 playernum=$1
 
 #TODO set this to where your code and jar file root dir is
-BASEDIR=$HOME/comp512/p2
+BASEDIR=$HOME/Desktop/512A2/comp512p2
 
 #TODO update your group number here in place of XX
-group=xx
+group=26
 
 #TODO Optional
 # this will always generate the same game island. Change the last digits to any number if you want to change it to a different island map. Otherwise leave it as it is.
@@ -26,8 +26,8 @@ gameid=game-$group-99
 # player1 -> process 1, player 2 -> process 2, etc .. add more depending on how many players are playing.
 # Remember to start the scripts of corresponding players from the corresponding servers.
 # comment out process3 if you are only playing 2 players, etc.
-export process1=server1:401$group
-export process2=server2:402$group
+export process1="$(hostname)":401$group
+export process2="$(hostname)":402$group
 #export process3=server3:403$group
 #export process4=server4:404$group
 #export process5=server5:405$group
