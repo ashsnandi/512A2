@@ -1,4 +1,6 @@
 package comp512st.paxos;
+import java.util.*;
+import java.io.Serializable;
 
 public class Deny implements Serializable {
     private final Ballot ballot;
