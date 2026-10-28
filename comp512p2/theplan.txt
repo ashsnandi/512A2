@@ -1,0 +1,41 @@
+
+goal: every process delivers the same moves in the same order.
+ the log is a numbered list of slots, and paxos runs once per
+  slot to agree on one value for it.
+
+two roles in every process:
+acceptor (acceptLoop, done): answers propose/accept based only on what it promised for that slot. it never counts anything.
+proposer (broadcastTOMsg, still to write): tries to get its value into the next free slot, counts replies, and retries until its value is chosen.
+messages:
+
+propose(b, s): "can i lead slot s with ballot b?"
+promise(b, s, accB, accV): "yes, and here's what i already accepted for s, if anything."
+deny(b, s, higherB): "no, i promised higherB, go higher than that."
+accept(b, s, v): "please accept value v for slot s under ballot b." only sent after a majority of promises.
+acceptack(b, s, v): "accepted." the proposer counts these.
+confirm(s, v): "v is decided for s." everyone records it and delivers slots in order.
+rules that keep it correct:
+
+majority = n/2 + 1: any two majorities overlap, so two different values can never both be chosen for a slot.
+adopt the highest accepted value: if any promise reports an accepted value, you must propose that one instead of yours, because it may already be chosen.
+ballot = (round, myId): ballots are unique and totally ordered, and myId breaks ties.
+proposal = (myId, seq, move): gives every move a unique id, so after serialization you can still tell whether the winning value is yours. otherwise moves get applied twice.
+deliver in slot order, stopping at gaps: this is what makes the order identical everywhere.
+
+architecture (how the pieces fit):
+
+threads:
+app thread: calls broadcastTOMsg (the proposer) and acceptTOMsg. broadcastTOMsg blocks until its move is chosen in some slot.
+accept thread (acceptLoop): the only reader of gcl.readGCMessage(). runs the acceptor side, and also updates the proposer's counters when promise/acceptack/deny replies come in.
+both threads share state under synchronized(this). the accept thread calls notifyAll() whenever a counter changes, and the proposer wait()s on those counters.
+
+state:
+slots: map slot -> SlotState(promised, acceptedBallot, acceptedValue, decided, decidedValue). one paxos instance per slot, acceptor and learner state together.
+current: the Attempt the proposer is running right now (slot, ballot, myValue, valueToPropose, promises, accepts, deniedBy, highestSeen, highestDenied). replies are only counted if isCurrent(slot, ballot), so stale replies from old slots/ballots get dropped.
+delivered: queue of decided moves in slot order. acceptTOMsg just take()s from it.
+nextDeliver: the next slot to hand to the app. the confirm handler moves it forward while slots are decided, and stops at the first gap.
+
+acceptor (acceptLoop, per slot s):
+propose(b): if b > promised -> promised = b, reply promise(b, s, acceptedBallot, acceptedValue). else deny(b, s, promised). failCheck RECEIVEPROPOSE before, AFTERSENDVOTE after.
+accept(b, v): if b >= promised -> promised = acceptedBallot = b, acceptedValue = v, reply acceptack. else deny(b, s, promised).
+confirm(s, v): mark decided (only the first time), then deliver in order from nextDeliver.

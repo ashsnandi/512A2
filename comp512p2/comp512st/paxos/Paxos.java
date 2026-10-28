@@ -28,15 +28,20 @@ public class Paxos
 	Map<Integer, SlotState> slots = new HashMap<>();
 	private int nextDeliver = 0;
 	Attempt current = null;  
+	private final int majority;
+	private final int myId; // index in the group list, same on every process -> ballot tiebreak + Proposal origin
 
 	public Paxos(String myProcess, String[] allGroupProcesses, Logger logger, FailCheck failCheck) throws IOException, UnknownHostException
 	{
 		// Rember to call the failCheck.checkFailure(..) with appropriate arguments throughout your Paxos code to force fail points if necessary.
 		this.failCheck = failCheck;
+		this.majority = (allGroupProcesses.length  / 2) + 1;
+		this.myId = java.util.Arrays.asList(allGroupProcesses).indexOf(myProcess);
 
 		// Initialize the GCL communication system as well as anything else you need to.
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
 
+		// start last so the thread sees every field set
 		this.acceptThread = new Thread(this::acceptLoop, "paxos-accept");
 		this.acceptThread.setDaemon(true);
 		this.acceptThread.start();
@@ -46,29 +51,28 @@ public class Paxos
 	private void acceptLoop()
 	{
 		try {
-			while (!Thread.currentThread().isInterrupted()) {
-				GCMessage gcmsg = gcl.readGCMessage(); // blocks
+			while (!Thread.currentThread().isInterrupted()) { 
+				GCMessage gcmsg = gcl.readGCMessage();
 				Object msg = gcmsg.val;
 				String sender = gcmsg.senderProcess;
 
 				synchronized (this) {
-					// ---- acceptor side: every comparison is against THIS slot's state ----
-					if (msg instanceof Propose) {
+					if (msg instanceof Propose) { // case propose
 						Propose p = (Propose) msg;
-						failCheck.checkFailure(FailCheck.FailureType.RECEIVEPROPOSE);
-						SlotState st = slot(p.getSlot());
-						if (p.getBallotId().compareTo(st.promised) > 0) {
-							st.promised = p.getBallotId(); // promise this ballot for this slot
-							gcl.sendMsg(new Promise(p.getBallotId(), p.getSlot(), st.acceptedBallot, st.acceptedValue), sender);
+						failCheck.checkFailure(FailCheck.FailureType.RECEIVEPROPOSE); // from spec
+						SlotState st = slot(p.getSlot()); // get which slot happen sfrom thi smessage
+						if (p.getBallotId().compareTo(st.promised) > 0) { // if this ballot is higher than the currently proposed one in the slot
+							st.promised = p.getBallotId();
+							gcl.sendMsg(new Promise(p.getBallotId(), p.getSlot(), st.acceptedBallot, st.acceptedValue), sender); // promise this new one 
 						} else {
 							// tell the proposer what we promised so it can jump past it
-							gcl.sendMsg(new Deny(p.getBallotId(), p.getSlot(), st.promised), sender);
+							gcl.sendMsg(new Deny(p.getBallotId(), p.getSlot(), st.promised), sender); // deny
 						}
 						failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 					} else if (msg instanceof Accept) {
-						Accept a = (Accept) msg;
-						SlotState st = slot(a.getSlot());
-						if (a.getBallot().compareTo(st.promised) >= 0) {
+						Accept a = (Accept) msg; // accep tmessage 
+						SlotState st = slot(a.getSlot()); //get the slot
+						if (a.getBallot().compareTo(st.promised) >= 0) { // if the acceting ballot is what im expecting it to be
 							st.promised = a.getBallot();
 							st.acceptedBallot = a.getBallot();
 							st.acceptedValue = a.getValue();
@@ -76,7 +80,7 @@ public class Paxos
 						} else {
 							gcl.sendMsg(new Deny(a.getBallot(), a.getSlot(), st.promised), sender);
 						}
-					} else if (msg instanceof Confirm) {
+					} else if (msg instanceof Confirm) { //majority has been accepted
 						Confirm c = (Confirm) msg;
 						SlotState st = slot(c.getSlot());
 						if (!st.decided) {
@@ -85,11 +89,10 @@ public class Paxos
 						}
 						// hand decided slots to the app strictly in slot order, stopping at the first gap
 						while (slot(nextDeliver).decided) {
-							delivered.put(slot(nextDeliver).decidedValue);
+							delivered.put(((Proposal) slot(nextDeliver).decidedValue).getValue()); // unwrap for the app
 							nextDeliver++;
 						}
 
-					// ---- proposer side: only count replies for our current slot + ballot ----
 					} else if (msg instanceof Promise) {
 						Promise p = (Promise) msg;
 						if (isCurrent(p.getSlot(), p.getBallot())) {
@@ -98,20 +101,23 @@ public class Paxos
 							Ballot ab = p.getAcceptedBallot();
 							if (ab != null && (current.highestSeen == null || ab.compareTo(current.highestSeen) > 0)) {
 								current.highestSeen = ab;
-								current.valueToPropose = p.getAcceptedValue();
+								current.valueToPropose = (Proposal) p.getAcceptedValue();
 							}
-							notifyAll();
+							notifyAll(); // neccesary because we're changing things
 						}
 					} else if (msg instanceof AcceptAck) {
 						AcceptAck ack = (AcceptAck) msg;
 						if (isCurrent(ack.getSlot(), ack.getBallot())) {
 							current.accepts++;
+							if (current.accepts == this.majority){ // == so we only confirm once
+								gcl.broadcastMsg(new Confirm(ack.getSlot(), ack.getValue()));
+							}
 							notifyAll();
 						}
 					} else if (msg instanceof Deny) {
 						Deny d = (Deny) msg;
 						if (isCurrent(d.getSlot(), d.getBallot())) {
-							current.denies++;
+							current.deniedBy.add(sender); // a set, so one acceptor denying in both phases counts once
 							Ballot higher = (Ballot) d.getValue();
 							if (current.highestDenied == null || higher.compareTo(current.highestDenied) > 0) {
 								current.highestDenied = higher;
@@ -167,16 +173,27 @@ public class Paxos
 class Attempt {
     final int slot;
     final Ballot ballot;
-    final Object myValue;
-    int promises, accepts, denies;
-    Object valueToPropose;
+    final Proposal myValue;
+    int promises, accepts;
+    final java.util.Set<String> deniedBy = new java.util.HashSet<>(); // acceptors that denied this ballot
+    Proposal valueToPropose;
     Ballot highestSeen;     // highest acceptedBallot reported in a Promise
     Ballot highestDenied;   // highest ballot an acceptor denied us with
 
-    Attempt(int slot, Ballot ballot, Object myValue) {
+    Attempt(int slot, Ballot ballot, Proposal myValue) {
         this.slot = slot;
         this.ballot = ballot;
         this.myValue = myValue;
         this.valueToPropose = myValue;
+    }
+
+    // call right before sending Accept: phase-1 denies shouldn't count toward giving up in phase 2
+    void startAcceptPhase() {
+        deniedBy.clear();
+    }
+
+    // true if the value chosen for this slot is ours (compares ids, not references)
+    boolean chosenIsMine() {
+        return valueToPropose.sameAs(myValue);
     }
 }

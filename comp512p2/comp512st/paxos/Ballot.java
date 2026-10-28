@@ -3,7 +3,7 @@ package comp512st.paxos;
 import java.util.*;
 import java.io.Serializable;
 
-class Ballot implements Serializable {
+public class Ballot implements Serializable {
 
     private final int round;
     private final int processId;
@@ -11,6 +11,10 @@ class Ballot implements Serializable {
     Ballot(int round, int processId) {
         this.round = round;
         this.processId = processId;
+    }
+
+    int getRound() {
+        return round;
     }
 
     public List<Integer> getUniqueBallotId() {
