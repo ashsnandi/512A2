@@ -1,0 +1,9 @@
+Introducing the valueLocked variable 
+
+We found during testing that processes confirmed different moves producing differing total order sequences. 
+
+The example was p4 got p8 and p9 to accept "4 D" under ballot(4,4)
+p5 starts ballot (6, 5) for its own move "5 D". The first five promises came from processes 1,2,3,6 and 7. p5 gets a majority so valueToPropose is "5 D" and p5 sends Accept for that move 
+
+those 5 processes accept the move and send acks. 
+p8's promise (from the p5 propose), shows up answering ballot(6, 5). It replies with its previous ballot (4,4). Then in the accept loop code for Promise, the move from ballot (4,4) "4 D" is compared against null and due it to being higher, value to propose for current is set to "4 D"

@@ -108,7 +108,8 @@ public class Paxos {
 
 					} else if (msg instanceof Promise) {
 						Promise p = (Promise) msg;
-						if (isCurrent(p.getSlot(), p.getBallot())) {
+						// once phase 2 starts, a late promise must not replace the value already sent
+						if (isCurrent(p.getSlot(), p.getBallot()) && !current.valueLocked) {
 							current.promises++;
 							// must adopt the value accepted under the highest ballot, if any
 							Ballot ab = p.getAcceptedBallot();
@@ -336,6 +337,7 @@ class Attempt {
 	int promises, accepts;
 	final java.util.Set<String> deniedBy = new java.util.HashSet<>(); // acceptors that denied this ballot
 	Proposal valueToPropose;
+	boolean valueLocked; // Accept has been sent; valueToPropose stays fixed
 	Ballot highestSeen; // highest acceptedBallot reported in a Promise
 	Ballot highestDenied; // highest ballot an acceptor denied us with
 
@@ -349,6 +351,7 @@ class Attempt {
 	// call right before sending Accept: phase-1 denies shouldn't count toward
 	// giving up in phase 2
 	void startAcceptPhase() {
+		valueLocked = true;
 		deniedBy.clear();
 	}
 
