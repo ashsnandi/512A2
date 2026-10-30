@@ -12,18 +12,18 @@ gameid=game-$group-99
 
 #TODO edit these entries to put the name of the server that you are using and the associated ports.
 # Remember to start the script from this host
-export autotesthost=tr-open-01.cs.mcgill.ca
+export autotesthost="$(hostname)"
 # player1 -> process 1, player 2 -> process 2, etc .. add more depending on how many players are playing.
 # Script automatically counts the variables to figure out the number of players.
 export process1=${autotesthost}:401$group
 export process2=${autotesthost}:402$group
 export process3=${autotesthost}:403$group
-#export process4=${autotesthost}:404$group
-#export process5=${autotesthost}:405$group
-#export process6=${autotesthost}:406$group
-#export process7=${autotesthost}:407$group
-#export process8=${autotesthost}:408$group
-#export process9=${autotesthost}:409$group
+export process4=${autotesthost}:404$group
+export process5=${autotesthost}:405$group
+export process6=${autotesthost}:406$group
+export process7=${autotesthost}:407$group
+export process8=${autotesthost}:408$group
+# export process9=${autotesthost}:409$group
 
 #TODO update these values as needed
 maxmoves=100 interval=100 randseed=xxxxxxxxx
@@ -34,7 +34,7 @@ maxmoves=100 interval=100 randseed=xxxxxxxxx
 #export failmode_N=AFTERBECOMINGLEADER
 #export failmode_N=AFTERVALUEACCEPT
 #For example this enabled failmode AFTERBECOMINGLEADER for player/process 2 (only one failmode can be set per process). It is important to have the export.
-export failmode_2=AFTERBECOMINGLEADER
+# export failmode_2=AFTERBECOMINGLEADER
 
 # Check if this script is being exectuted on the correct server.
 if [[ $autotesthost != $(hostname) ]]
