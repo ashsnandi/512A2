@@ -25,8 +25,11 @@ public class Paxos {
 	private final java.util.concurrent.BlockingQueue<Object> delivered = new java.util.concurrent.LinkedBlockingQueue<>();
 	Map<Integer, SlotState> slots = new HashMap<>();
 	private int nextDeliver = 0;
+	// a value can get decided in two slots (retry after another leader finished ours); deliver it once
+	private final java.util.Set<String> deliveredIds = new java.util.HashSet<>();
 	Attempt current = null;
 	private final int majority;
+	private volatile long lastHeard = System.currentTimeMillis();
 	private final int groupSize;
 	private int round = 0;
 	private static final long RETRY_MS = 1000;
@@ -62,8 +65,10 @@ public class Paxos {
 		try {
 			while (!Thread.currentThread().isInterrupted()) {
 				GCMessage gcmsg = gcl.readGCMessage();
+				lastHeard = System.currentTimeMillis();
 				Object msg = gcmsg.val;
 				String sender = gcmsg.senderProcess;
+				
 
 				synchronized (this) {
 					if (msg instanceof Propose) { // case propose
@@ -102,7 +107,8 @@ public class Paxos {
 						// hand decided slots to the app strictly in slot order, stopping at the first
 						// gap
 						while (slot(nextDeliver).decided) {
-							delivered.put(((Proposal) slot(nextDeliver).decidedValue).getValue()); // unwrap for the app
+							Proposal dp = (Proposal) slot(nextDeliver).decidedValue;
+							if (deliveredIds.add(dp.id())) delivered.put(dp.getValue()); // unwrap for the app, no more duplicates
 							nextDeliver++;
 						}
 
@@ -185,6 +191,7 @@ public class Paxos {
 				if (slot(slot).decided || current.promises < majority) {
 					// give up
 					// continue will try move again with new ballot
+					backoff();
 					continue;
 				}
 
@@ -214,7 +221,8 @@ public class Paxos {
 					}
 					while (slot(nextDeliver).decided) {
 						try {
-							delivered.put(((Proposal) slot(nextDeliver).decidedValue).getValue()); // unwrap for the app
+							Proposal dp = (Proposal) slot(nextDeliver).decidedValue;
+							if (deliveredIds.add(dp.id())) delivered.put(dp.getValue()); // unwrap for the app, skip dupes
 							nextDeliver++;
 						} catch (InterruptedException e) {
 							logger.log(Level.SEVERE, "HERE: InterruptedException while waiting for messages.", e);
@@ -238,6 +246,7 @@ public class Paxos {
 				if (current.focusedSlotFilledAndMine(slot(slot))) {
 					return;
 				}
+				backoff();
 				continue;
 
 			}
@@ -250,6 +259,22 @@ public class Paxos {
 		// a majority (and immediately upon majority) of processes have accepted the
 		// value.
 		// gcl.broadcastMsg(val);
+	}
+
+	// random pause after losing a slot so the same proposer doesn't keep winning
+	// uses wait so acceptLoop can still run; loops because notifyAll wakes us early
+	private void backoff() {
+		long until = System.currentTimeMillis()
+				+ java.util.concurrent.ThreadLocalRandom.current().nextLong(RETRY_MS / 2);
+		try {
+			long timeLeft;
+			while ((timeLeft = until - System.currentTimeMillis()) > 0) {
+				wait(timeLeft);
+			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new RuntimeException(e);
+		}
 	}
 
 	private void waitUntil(java.util.function.BooleanSupplier doneCondition) {
@@ -325,6 +350,19 @@ public class Paxos {
 
 	// Add any of your own shutdown code into this method.
 	public void shutdownPaxos() {
+		long counter = 3 * RETRY_MS;
+		// to ensure that we don't shut down after hte app finishes specific moves (during a graceful shutdown)
+		synchronized (this){
+			try {
+				long silentFor;
+				while ((silentFor = System.currentTimeMillis() - lastHeard) < counter) {
+					wait (counter - silentFor);
+				}
+			}
+			catch (InterruptedException e){
+				Thread.currentThread().interrupt(); //safet
+			}
+		}
 		acceptThread.interrupt();
 		gcl.shutdownGCL();
 	}

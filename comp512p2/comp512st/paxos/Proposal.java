@@ -5,8 +5,8 @@ import java.io.Serializable;
 // wraps an app value with a unique id so we can tell values apart after they've been serialized
 class Proposal implements Serializable {
 
-    private final int origin; // process that first proposed it
-    private final int seq;    // per-process counter
+    private final int origin;
+    private final int seq; 
     private final Object value;
 
     Proposal(int origin, int seq, Object value) {
@@ -22,6 +22,11 @@ class Proposal implements Serializable {
     // same logical proposal, even if one side is a deserialized copy
     boolean sameAs(Proposal other) {
         return other != null && origin == other.origin && seq == other.seq;
+    }
+
+    // key for remembering which proposals were already delivered
+    String id() {
+        return origin + ":" + seq;
     }
 
 }
